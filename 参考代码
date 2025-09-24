@@ -1,0 +1,331 @@
+### pone&jome 代办小程序（大作业版）任务详解（面向前端入门者）  
+
+
+#### **一、整体说明**  
+本项目使用 **HTML+CSS+原生JavaScript** 开发，无需框架，核心目标是实现“任务录入→自动拆解→进度展示→本地保存”的完整流程。以下按角色拆分任务，每个步骤附带“大白话解释”和“具体操作指南”。  
+
+
+### **二、组长/全栈协调（负责“大脑”：数据结构+算法+存储）**  
+#### **任务1：设计任务数据结构（`js/taskModel.js`）**  
+- **目标**：定义“任务”长什么样（比如一个任务需要包含名称、时间、目标等信息），确保所有人写代码时都用同一个“模板”。  
+- **具体操作**：  
+  1. 创建文件 `js/taskModel.js`，定义一个“任务对象”的标准格式，例如：  
+     ```javascript
+     // 任务对象模板（复制粘贴即可，后续代码会用这个格式存数据）
+     const TaskTemplate = {
+       id: Date.now(), // 任务唯一ID（用当前时间戳自动生成，确保不重复）
+       name: "备考六级", // 任务名称（用户输入）
+       startTime: "2023-09", // 开始时间（格式：YYYY-MM，用户输入）
+       endTime: "2023-11", // 结束时间（格式同上）
+       totalGoal: 3000, // 总目标（比如单词数，用户输入）
+       subTasks: [] // 子任务列表（后面算法会自动生成，初期为空）
+     };
+     ```  
+  2. 把这个模板复制到 `app.js` 中，供其他模块调用。  
+
+#### **任务2：开发任务拆解算法（`js/taskSplit.js`）**  
+- **目标**：用户输入“总目标”和“时间跨度”，自动拆分成每月小任务（比如3000词/3个月→每月1000词）。  
+- **具体操作**：  
+  1. 创建文件 `js/taskSplit.js`，写一个拆分函数：  
+     ```javascript
+     // 输入：用户创建的任务（包含startTime, endTime, totalGoal）
+     // 输出：拆分后的子任务数组（每个子任务有月份、目标值）
+     function splitSubTasks(task) {
+       const start = new Date(task.startTime); // 转成日期对象（方便计算月份）
+       const end = new Date(task.endTime);
+       // 计算总月数（比如2023-09到2023-11是3个月）
+       const totalMonths = (end.getMonth() - start.getMonth()) + 1; 
+       // 每月目标（向上取整，避免除不尽，比如3000/3=1000，3000/4=750）
+       const monthlyGoal = Math.ceil(task.totalGoal / totalMonths); 
+       
+       const subTasks = [];
+       // 循环生成每个月的子任务
+       for (let i = 0; i < totalMonths; i++) {
+         const currentMonth = new Date(start);
+         currentMonth.setMonth(start.getMonth() + i); // 从开始月往后加i个月
+         // 格式化月份为“YYYY-MM”（比如2023-09）
+         const monthStr = currentMonth.toISOString().slice(0, 7); 
+         subTasks.push({
+           id: Date.now() + i, // 子任务ID（时间戳+i，确保唯一）
+           month: monthStr, // 月份
+           target: monthlyGoal, // 本月目标
+           completed: 0 // 已完成数（初始为0）
+         });
+       }
+       return subTasks; // 返回子任务数组
+     }
+     ```  
+  2. 在 `app.js` 中导入这个函数，在用户提交任务时调用（后面会说）。  
+
+#### **任务3：封装本地存储模块（`js/storage.js`）**  
+- **目标**：让任务数据保存在浏览器中（关闭网页再打开不丢失），类似“记事本自动保存”。  
+- **具体操作**：  
+  1. 创建文件 `js/storage.js`，写3个核心函数：  
+     ```javascript
+     // 1. 保存任务到本地存储
+     function saveTask(task) {
+       // 先从本地存储读取已有任务（如果没有就为空数组）
+       const existingTasks = JSON.parse(localStorage.getItem("tasks") || "[]");
+       existingTasks.push(task); // 把新任务添加到数组
+       // 存回本地存储（localStorage只能存字符串，所以用JSON.stringify转一下）
+       localStorage.setItem("tasks", JSON.stringify(existingTasks));
+     }
+
+     // 2. 从本地存储读取所有任务
+     function loadTasks() {
+       return JSON.parse(localStorage.getItem("tasks") || "[]");
+     }
+
+     // 3. 更新任务（比如用户修改了进度）
+     function updateTask(updatedTask) {
+       const tasks = loadTasks();
+       // 找到要更新的任务（按id匹配）
+       const index = tasks.findIndex(task => task.id === updatedTask.id);
+       if (index !== -1) {
+         tasks[index] = updatedTask; // 替换旧任务数据
+         localStorage.setItem("tasks", JSON.stringify(tasks));
+       }
+     }
+     ```  
+  2. 在需要保存/读取数据的地方（如表单提交、页面加载时）调用这些函数。  
+
+#### **任务4：代码集成（`app.js`）**  
+- **具体操作**：  
+  1. 创建文件 `app.js`，作为入口，导入所有模块函数：  
+     ```javascript
+     // 导入其他模块的函数
+     import { splitSubTasks } from './js/taskSplit.js';
+     import { saveTask, loadTasks } from './js/storage.js';
+     import { renderTaskList } from './js/render.js';
+
+     // 页面加载时自动渲染任务列表
+     window.onload = function() {
+       renderTaskList(); // 调用前端A写的渲染函数
+     };
+
+     // 供前端B调用：用户提交新任务时执行
+     export function handleAddTask(taskData) {
+       const subTasks = splitSubTasks(taskData); // 调用拆分算法生成子任务
+       const newTask = { ...taskData, subTasks: subTasks }; // 把subTasks加到任务里
+       saveTask(newTask); // 保存到本地存储
+       renderTaskList(); // 重新渲染列表，让新任务显示出来
+     }
+     ```  
+
+
+### **三、前端开发A（负责“颜值”：页面结构+样式+动态渲染）**  
+#### **任务1：编写HTML结构（`index.html`）**  
+- **目标**：搭一个网页骨架，包含“输入框”（用户填任务）和“任务列表区域”（显示任务）。  
+- **具体操作**：  
+  1. 创建文件 `index.html`，复制以下代码（直接用，不用改）：  
+     ```html
+     <!DOCTYPE html>
+     <html>
+     <head>
+       <title>代办小程序</title>
+       <link rel="stylesheet" href="css/style.css"> <!-- 链接样式文件 -->
+     </head>
+     <body>
+       <h1>我的任务规划</h1>
+       
+       <!-- 任务录入表单 -->
+       <div class="task-form">
+         <h3>添加新任务</h3>
+         <input type="text" id="taskName" placeholder="任务名称（如：备考六级）" required>
+         <input type="month" id="startTime" required> <!-- 月份选择器 -->
+         <input type="month" id="endTime" required>
+         <input type="number" id="totalGoal" placeholder="总目标（如：3000词）" min="1" required>
+         <button id="addTaskBtn">创建任务</button>
+       </div>
+
+       <!-- 任务列表区域 -->
+       <div id="taskList">
+         <!-- 这里会由JS动态生成任务卡片 -->
+         <div class="empty-state">暂无任务，快去创建第一个任务吧！</div>
+       </div>
+
+       <!-- 导入JS文件（注意顺序） -->
+       <script type="module" src="js/render.js"></script>
+       <script type="module" src="js/taskAdd.js"></script>
+       <script type="module" src="app.js"></script>
+     </body>
+     </html>
+     ```  
+
+#### **任务2：开发任务渲染逻辑（`js/render.js`）**  
+- **目标**：从本地存储读取任务数据，在页面上显示成“任务卡片”，包含名称、时间、进度条等。  
+- **具体操作**：  
+  1. 创建文件 `js/render.js`，写渲染函数：  
+     ```javascript
+     import { loadTasks } from './storage.js';
+     import { calcProgress } from './utils.js'; // 后面前端B会写这个工具函数
+
+     // 渲染所有任务
+     export function renderTaskList() {
+       const taskList = document.getElementById("taskList");
+       const tasks = loadTasks(); // 获取本地存储的任务
+
+       // 如果没有任务，显示空状态提示
+       if (tasks.length === 0) {
+         taskList.innerHTML = '<div class="empty-state">暂无任务，快去创建第一个任务吧！</div>';
+         return;
+       }
+
+       // 有任务时，生成任务卡片HTML
+       let html = '';
+       tasks.forEach(task => {
+         const totalProgress = calcProgress(task); // 计算总进度百分比
+         // 拼接任务卡片HTML（包含标题、进度条、子任务列表）
+         html += `
+           <div class="task-card">
+             <div class="task-header" onclick="toggleSubTasks(${task.id})">
+               <h3>${task.name}</h3>
+               <p>${task.startTime} ~ ${task.endTime} | 总目标：${task.totalGoal} | 进度：${totalProgress}%</p>
+               <div class="progress-bar">
+                 <div class="progress" style="width: ${totalProgress}%"></div>
+               </div>
+             </div>
+             <div class="sub-tasks" id="subTasks-${task.id}" style="display: none;">
+               ${renderSubTasks(task.subTasks, task.id)} <!-- 渲染子任务 -->
+             </div>
+           </div>
+         `;
+       });
+       taskList.innerHTML = html;
+     }
+
+     // 渲染子任务列表（每个月的目标和进度）
+     function renderSubTasks(subTasks, taskId) {
+       let html = '<ul>';
+       subTasks.forEach(subTask => {
+         html += `
+           <li>
+             <span>${subTask.month}：目标 ${subTask.target}，已完成 ${subTask.completed}</span>
+             <input type="number" class="progress-input" data-task-id="${taskId}" data-subtask-id="${subTask.id}" placeholder="输入完成数">
+             <button class="update-btn" data-task-id="${taskId}" data-subtask-id="${subTask.id}">更新</button>
+           </li>
+         `;
+       });
+       html += '</ul>';
+       return html;
+     }
+
+     // 子任务展开/折叠（绑定到任务标题的onclick）
+     window.toggleSubTasks = function(taskId) {
+       const subTasksDiv = document.getElementById(`subTasks-${taskId}`);
+       subTasksDiv.style.display = subTasksDiv.style.display === 'block' ? 'none' : 'block';
+     };
+     ```  
+
+#### **任务3：设计样式（`css/style.css`）**  
+- **目标**：让页面好看点，比如任务卡片有边框、进度条是蓝色的、子任务折叠时有动画。  
+- **具体操作**：  
+  1. 创建文件夹 `css`，在里面创建 `style.css`，复制以下基础样式：  
+     ```css
+     /* 基础样式 */
+     body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+     .task-form { background: #f5f5f5; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+     .task-form input { margin: 5px 0; padding: 8px; width: 100%; box-sizing: border-box; }
+     .task-form button { background: #4CAF50; color: white; padding: 10px; border: none; border-radius: 4px; cursor: pointer; }
+
+     /* 任务卡片样式 */
+     .task-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 10px; }
+     .task-header { cursor: pointer; }
+     .progress-bar { height: 20px; background: #eee; border-radius: 10px; margin: 10px 0; overflow: hidden; }
+     .progress { height: 100%; background: #4CAF50; transition: width 0.3s; } /* 进度条动画 */
+
+     /* 子任务样式 */
+     .sub-tasks { margin-top: 10px; padding-left: 20px; }
+     .sub-tasks li { margin: 8px 0; display: flex; gap: 10px; align-items: center; }
+     .sub-tasks input { width: 80px; }
+     .empty-state { color: #888; text-align: center; padding: 40px; }
+     ```  
+
+
+### **四、前端开发B（负责“交互”：表单提交+进度更新+工具函数）**  
+#### **任务1：任务录入表单交互（`js/taskAdd.js`）**  
+- **目标**：用户在输入框填完任务信息，点击“创建任务”按钮后，数据能被正确读取并提交给组长的集成代码。  
+- **具体操作**：  
+  1. 创建文件 `js/taskAdd.js`，写表单提交逻辑：  
+     ```javascript
+     import { handleAddTask } from '../app.js'; // 调用组长写的集成函数
+
+     // 页面加载后绑定按钮点击事件
+     window.onload = function() {
+       document.getElementById("addTaskBtn").addEventListener("click", function() {
+         // 获取输入框的值
+         const name = document.getElementById("taskName").value;
+         const startTime = document.getElementById("startTime").value;
+         const endTime = document.getElementById("endTime").value;
+         const totalGoal = parseInt(document.getElementById("totalGoal").value);
+
+         // 简单验证（确保用户填了所有内容）
+         if (!name || !startTime || !endTime || isNaN(totalGoal) || totalGoal <= 0) {
+           alert("请填写有效的任务信息！");
+           return;
+         }
+
+         // 创建任务对象（用组长定义的模板格式）
+         const newTask = {
+           id: Date.now(), // 唯一ID
+           name: name,
+           startTime: startTime,
+           endTime: endTime,
+           totalGoal: totalGoal,
+           subTasks: [] // 子任务后面由拆分算法生成
+         };
+
+         // 调用集成函数，处理后续流程（拆分→保存→渲染）
+         handleAddTask(newTask);
+
+         // 清空输入框
+         document.getElementById("taskName").value = "";
+         document.getElementById("totalGoal").value = "";
+       });
+     };
+     ```  
+
+#### **任务2：进度更新功能（`js/interact.js`）**  
+- **目标**：用户在子任务输入框填“已完成数”，点击“更新”按钮后，进度条会实时变化，数据保存到本地。  
+- **具体操作**：  
+  1. 创建文件 `js/interact.js`，写更新逻辑：  
+     ```javascript
+     import { loadTasks, updateTask } from './storage.js';
+     import { renderTaskList } from './render.js';
+
+     // 页面加载后，给所有“更新”按钮绑定点击事件
+     window.onload = function() {
+       document.addEventListener("click", function(e) {
+         if (e.target.classList.contains("update-btn")) {
+           // 获取任务ID和子任务ID（从按钮的data属性中取）
+           const taskId = parseInt(e.target.dataset.taskId);
+           const subtaskId = parseInt(e.target.dataset.subtaskId);
+           // 获取用户输入的完成数
+           const input = e.target.previousElementSibling;
+           const completed = parseInt(input.value);
+
+           // 验证输入（确保是数字且不小于0）
+           if (isNaN(completed) || completed < 0) {
+             alert("请输入有效的数字！");
+             return;
+           }
+
+           // 获取当前任务数据
+           const tasks = loadTasks();
+           const task = tasks.find(t => t.id === taskId);
+           if (!task) return;
+
+           // 更新子任务的completed字段
+           const subTask = task.subTasks.find(st => st.id === subtaskId);
+           if (subTask) {
+             subTask.completed = completed;
+             // 保存更新后的任务
+             updateTask(task);
+             // 重新渲染页面，显示最新进度
+             renderTaskList();
+             // 清空输入框
+             input.value = "";
+           }
+         }
+       });
+     };
